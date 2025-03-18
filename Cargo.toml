@@ -1,0 +1,10 @@
+[package]
+name = "oss"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+byteorder = "1.5.0"
+imgui = "0.12.0"
+nix = { version = "0.29.0", features = [ "ioctl" ] }
+wavers = "1.5.1"
