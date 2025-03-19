@@ -95,8 +95,11 @@ impl BufferInfo {
 }
 
 const SNDCTL_DSP_MAGIC: u8 = b'P';
+const SNDCTL_DSP_SPEED: u8 = 2;
+const SNDCTL_DSP_SETFMT: u8 = 5;
 const SNDCTL_DSP_CHANNELS: u8 = 6;
 const SNDCTL_DSP_GETOSPACE: u8 = 12;
+const SNDCTL_DSP_GETCAPS: u8 = 15;
 nix::ioctl_readwrite!(oss_channels, SNDCTL_DSP_MAGIC, SNDCTL_DSP_CHANNELS, i32);
 nix::ioctl_read!(
     oss_buffer_info,
@@ -104,6 +107,36 @@ nix::ioctl_read!(
     SNDCTL_DSP_GETOSPACE,
     BufferInfo
 );
+nix::ioctl_read!(oss_caps, SNDCTL_DSP_MAGIC, SNDCTL_DSP_GETCAPS, i32);
+nix::ioctl_readwrite!(oss_set_format, SNDCTL_DSP_MAGIC, SNDCTL_DSP_SETFMT, u32);
+nix::ioctl_readwrite!(oss_set_speed, SNDCTL_DSP_MAGIC, SNDCTL_DSP_SPEED, i32);
+
+// error = ioctl(config->fd, SNDCTL_DSP_SPEED, &tmp);
+// #define SNDCTL_DSP_SPEED	_IOWR('P', 2, int)
+
+pub const AFMT_QUERY:       u32 = 0x00000000;
+pub const AFMT_MU_LAW:      u32 = 0x00000001;
+pub const AFMT_A_LAW :      u32 = 0x00000002;
+pub const AFMT_IMA_ADPCM:   u32 = 0x00000004;
+pub const AFMT_U8:          u32 = 0x00000008;
+pub const AFMT_S16_LE:      u32 = 0x00000010;
+pub const AFMT_S16_BE:      u32 = 0x00000020;
+pub const AFMT_S8:          u32 = 0x00000040;
+pub const AFMT_U16_LE:      u32 = 0x00000080;
+pub const AFMT_U16_BE:      u32 = 0x00000100;
+pub const AFMT_MPEG:        u32 = 0x00000200;
+pub const AFMT_AC3:         u32 = 0x00000400;
+pub const AFMT_S32_LE:      u32 = 0x00001000;
+pub const AFMT_S32_BE:      u32 = 0x00002000;
+pub const AFMT_U32_LE:      u32 = 0x00004000;
+pub const AFMT_U32_BE:      u32 = 0x00008000;
+pub const AFMT_S24_LE:      u32 = 0x00010000;
+pub const AFMT_S24_BE:      u32 = 0x00020000;
+pub const AFMT_U24_LE:      u32 = 0x00040000;
+pub const AFMT_U24_BE:      u32 = 0x00080000;
+pub const AFMT_STEREO:      u32 = 0x10000000;
+pub const AFMT_WEIRD:       u32 = 0x20000000;
+pub const AFMT_FULLDUPLEX:  u32 = 0x80000000;
 
 const SNDCTL_INFO_MAGIC: u8 = b'X';
 const SNDCTL_ENGINEINFO: u8 = 12;
@@ -118,15 +151,24 @@ fn main() {
     let devpath = String::from("/dev/dsp");
     let dsp = File::open(devpath).unwrap();
     let fd = dsp.as_raw_fd();
-    let mut channels: i32 = 2;
     let mut audio_info = AudioInfo::new();
     let mut buffer_info = BufferInfo::new();
+    let mut format: u32 = AFMT_S32_LE;
+    let mut sample_rate: i32 = 48000;
     unsafe {
-        oss_channels(fd, &mut channels).expect("Failed to set number of channels");
+        // Get info about hardware
         oss_audio_info(fd, &mut audio_info).expect("Failed to get info on device");
+        oss_caps(fd, &mut audio_info.caps).expect("Failed to get capabilities of the device");
+
+        // Set number of channels, sample format and rate
+        oss_channels(fd, &mut audio_info.max_channels).expect("Failed to set number of channels");
+        oss_set_format(fd, &mut format).expect("Failed to set format");
+        oss_set_speed(fd, &mut sample_rate).expect("Failed to set sample rate");
+
+        // When it's all set and good to go, gather buffer size info
         oss_buffer_info(fd, &mut buffer_info).expect("Failed to get info on buffer size");
     }
     println!("channels = {}", audio_info.max_channels);
-    println!("rate = {}", audio_info.max_rate);
+    println!("rate = {}", sample_rate);
     println!("bytes = {}", buffer_info.bytes);
 }
