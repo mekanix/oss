@@ -1,54 +1,6 @@
 use nix::libc;
-use std::fs;
+use std::fs::File;
 use std::os::fd::AsRawFd;
-
-const SNDCTL_DSP_MAGIC: u8 = b'P';
-const SNDCTL_DSP_CHANNELS: u8 = 6;
-nix::ioctl_readwrite!(oss_channels, SNDCTL_DSP_MAGIC, SNDCTL_DSP_CHANNELS, i32);
-
-/*
-typedef char oss_longname_t[64];
-typedef char oss_label_t[16];
-typedef char oss_devnode_t[32];
-
-typedef struct oss_audioinfo
-{
-    int	dev;		/* Audio device number */
-    char	name[64];
-    int	busy;		/* 0, OPEN_READ, OPEN_WRITE or OPEN_READWRITE */
-    int	pid;
-    int	caps;		/* DSP_CAP_INPUT, DSP_CAP_OUTPUT */
-    int	iformats;
-    int	oformats;
-    int	magic;		/* Reserved for internal use */
-    char 	cmd[64];	/* Command using the device (if known) */
-    int	card_number;
-    int	port_number;
-    int	mixer_dev;
-    int	legacy_device;	/* Obsolete field. Replaced by devnode */
-    int	enabled;	/* 1=enabled, 0=device not ready at this
-                   moment */
-    int	flags;		/* For internal use only - no practical
-                   meaning */
-    int	min_rate;	/* Sample rate limits */
-    int	max_rate;
-    int	min_channels;	/* Number of channels supported */
-    int	max_channels;
-    int	binding;	/* DSP_BIND_FRONT, etc. 0 means undefined */
-    int	rate_source;
-    char	handle[32];
-    unsigned int nrates;
-    unsigned int rates[20]; /* Please read the manual before using these */
-    oss_longname_t	song_name;	/* Song name (if given) */
-    oss_label_t	label;		/* Device label (if given) */
-    int		latency;	/* In usecs, -1=unknown */
-    oss_devnode_t	devnode;	/* Device special file name (inside
-                       /dev) */
-    int next_play_engine;
-    int next_rec_engine;
-    int filler[184];
-} oss_audioinfo;
-*/
 
 #[repr(C)]
 struct AudioInfo {
@@ -123,6 +75,36 @@ impl AudioInfo {
     }
 }
 
+#[repr(C)]
+struct BufferInfo {
+    pub fragments: libc::c_int,
+    pub fragstotal: libc::c_int,
+    pub fragsize: libc::c_int,
+    pub bytes: libc::c_int,
+}
+
+impl BufferInfo {
+    fn new() -> BufferInfo {
+        BufferInfo {
+            fragments: 0,
+            fragstotal: 0,
+            fragsize: 0,
+            bytes: 0,
+        }
+    }
+}
+
+const SNDCTL_DSP_MAGIC: u8 = b'P';
+const SNDCTL_DSP_CHANNELS: u8 = 6;
+const SNDCTL_DSP_GETOSPACE: u8 = 12;
+nix::ioctl_readwrite!(oss_channels, SNDCTL_DSP_MAGIC, SNDCTL_DSP_CHANNELS, i32);
+nix::ioctl_read!(
+    oss_buffer_info,
+    SNDCTL_DSP_MAGIC,
+    SNDCTL_DSP_GETOSPACE,
+    BufferInfo
+);
+
 const SNDCTL_INFO_MAGIC: u8 = b'X';
 const SNDCTL_ENGINEINFO: u8 = 12;
 nix::ioctl_readwrite!(
@@ -134,14 +116,17 @@ nix::ioctl_readwrite!(
 
 fn main() {
     let devpath = String::from("/dev/dsp");
-    let dsp = fs::File::open(devpath).unwrap();
+    let dsp = File::open(devpath).unwrap();
     let fd = dsp.as_raw_fd();
     let mut channels: i32 = 2;
     let mut audio_info = AudioInfo::new();
+    let mut buffer_info = BufferInfo::new();
     unsafe {
         oss_channels(fd, &mut channels).expect("Failed to set number of channels");
         oss_audio_info(fd, &mut audio_info).expect("Failed to get info on device");
+        oss_buffer_info(fd, &mut buffer_info).expect("Failed to get info on buffer size");
     }
     println!("channels = {}", audio_info.max_channels);
     println!("rate = {}", audio_info.max_rate);
+    println!("bytes = {}", buffer_info.bytes);
 }
