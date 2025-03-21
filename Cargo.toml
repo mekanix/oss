@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 imgui = "0.12.0"
 nix = { version = "0.29.0", features = [ "ioctl" ] }
+wavers = "1.5.1"
