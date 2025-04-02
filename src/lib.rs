@@ -195,8 +195,8 @@ nix::ioctl_readwrite!(
 mod tests {
     use super::*;
     use std::io::Write;
-    use wavers::Wav;
     use std::slice::from_raw_parts;
+    use wavers::Wav;
 
     #[test]
     fn it_works() {
@@ -204,14 +204,25 @@ mod tests {
         let mut wav: Wav<i32> = Wav::from_path("./stereo32.wav").unwrap();
         let nchannels: usize = wav.n_channels().into();
         let mut out: Vec<i32> = vec![];
+        let mut iter = wav.frames();
 
-        for frame in wav.frames() {
-            for ch in 0..nchannels {
-                out.push(frame[ch]);
+        'outer: loop {
+            let mut i = 0;
+            while i < oss.chsamples {
+                match iter.next() {
+                    Some(ref samples) => {
+                        for ch in 0..nchannels {
+                            out.push(samples[ch]);
+                            i += 1;
+                        }
+                    }
+                    None => break 'outer,
+                }
             }
+            let bytes = unsafe { from_raw_parts(out.as_ptr() as *const u8, out.len() * 4) };
+            let _ret = oss.dsp.write(bytes);
+            out.clear();
         }
-        let bytes = unsafe { from_raw_parts(out.as_ptr() as *const u8, out.len() * 4) };
-        let _ret = oss.dsp.write(bytes);
         // assert_eq!(1, 2, "Fake error");
     }
 }
