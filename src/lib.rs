@@ -1,6 +1,11 @@
 use nix::libc;
-use std::{fs::File, mem, os::fd::AsRawFd};
+use std::{
+    fs::File,
+    mem,
+    os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
+};
 
+// Format
 pub const AFMT_QUERY: u32 = 0x00000000;
 pub const AFMT_MU_LAW: u32 = 0x00000001;
 pub const AFMT_A_LAW: u32 = 0x00000002;
@@ -25,6 +30,10 @@ pub const AFMT_STEREO: u32 = 0x10000000;
 pub const AFMT_WEIRD: u32 = 0x20000000;
 pub const AFMT_FULLDUPLEX: u32 = 0x80000000;
 
+// Triggers
+pub const PCM_ENABLE_INPUT: u32 = 0x00000001;
+pub const PCM_ENABLE_OUTPUT: u32 = 0x00000002;
+
 #[derive(Debug)]
 pub struct Config {
     pub dsp: File,
@@ -37,9 +46,14 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(path: &str, rate: i32) -> Config {
+    pub fn new(path: &str, rate: i32, bits: i32, mmap: bool) -> Config {
+        let mut binding = File::options();
+        let options = binding.write(true);
+        if mmap {
+            options.custom_flags(libc::O_RDONLY | libc::O_EXCL | libc::O_NONBLOCK);
+        }
         let mut c = Config {
-            dsp: File::options().read(true).write(true).open(path).unwrap(),
+            dsp: options.open(path).unwrap(),
             channels: 0,
             rate,
             bytes: 0,
@@ -47,23 +61,36 @@ impl Config {
             samples: 0,
             chsamples: 0,
         };
+        if bits == 32 {
+            c.format = AFMT_S32_LE;
+        } else if bits == 16 {
+            c.format = AFMT_S16_LE;
+        } else if bits == 8 {
+            c.format = AFMT_S8;
+        } else {
+            panic!("No format with {} bits", bits);
+        }
         let mut audio_info = AudioInfo::new();
         let mut buffer_info = BufferInfo::new();
         unsafe {
             let fd = c.dsp.as_raw_fd();
 
             // Get info about hardware
+            if mmap {
+                oss_set_cooked(fd, 0).expect("Failed to disable cooked mode");
+                oss_set_trigger(fd, 0).expect("Failed to set trigger");
+            }
             oss_audio_info(fd, &mut audio_info).expect("Failed to get info on device");
-            oss_caps(fd, &mut audio_info.caps).expect("Failed to get capabilities of the device");
 
             // Set number of channels, sample format and rate
+            oss_set_format(fd, &mut c.format).expect("Failed to set format");
             oss_channels(fd, &mut audio_info.max_channels)
                 .expect("Failed to set number of channels");
-            oss_set_format(fd, &mut c.format).expect("Failed to set format");
             oss_set_speed(fd, &mut c.rate).expect("Failed to set sample rate");
 
             // When it's all set and good to go, gather buffer size info
             oss_buffer_info(fd, &mut buffer_info).expect("Failed to get info on buffer size");
+            oss_caps(fd, &mut audio_info.caps).expect("Failed to get capabilities of the device");
         }
         c.channels = audio_info.max_channels;
         c.bytes = buffer_info.bytes;
@@ -171,6 +198,8 @@ const SNDCTL_DSP_SETFMT: u8 = 5;
 const SNDCTL_DSP_CHANNELS: u8 = 6;
 const SNDCTL_DSP_GETOSPACE: u8 = 12;
 const SNDCTL_DSP_GETCAPS: u8 = 15;
+const SNDCTL_DSP_SETTRIGGER: u8 = 16;
+const SNDCTL_DSP_COOKEDMODE: u8 = 30;
 nix::ioctl_readwrite!(oss_channels, SNDCTL_DSP_MAGIC, SNDCTL_DSP_CHANNELS, i32);
 nix::ioctl_read!(
     oss_buffer_info,
@@ -181,6 +210,8 @@ nix::ioctl_read!(
 nix::ioctl_read!(oss_caps, SNDCTL_DSP_MAGIC, SNDCTL_DSP_GETCAPS, i32);
 nix::ioctl_readwrite!(oss_set_format, SNDCTL_DSP_MAGIC, SNDCTL_DSP_SETFMT, u32);
 nix::ioctl_readwrite!(oss_set_speed, SNDCTL_DSP_MAGIC, SNDCTL_DSP_SPEED, i32);
+nix::ioctl_write_int!(oss_set_cooked, SNDCTL_DSP_MAGIC, SNDCTL_DSP_COOKEDMODE);
+nix::ioctl_write_int!(oss_set_trigger, SNDCTL_DSP_MAGIC, SNDCTL_DSP_SETTRIGGER);
 
 const SNDCTL_INFO_MAGIC: u8 = b'X';
 const SNDCTL_ENGINEINFO: u8 = 12;
@@ -200,7 +231,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let mut oss = Config::new("/dev/dsp", 48000);
+        let mut oss = Config::new("/dev/dsp", 48000, 32, false);
         let mut wav: Wav<i32> = Wav::from_path("./stereo32.wav").unwrap();
         let nchannels: usize = wav.n_channels().into();
         let mut out: Vec<i32> = vec![];
@@ -223,6 +254,13 @@ mod tests {
             let _ret = oss.dsp.write(bytes);
             out.clear();
         }
+        // assert_eq!(1, 2, "Fake error");
+    }
+
+    #[test]
+    #[ignore]
+    fn mmap_mode() {
+        let _oss = Config::new("/dev/dsp4", 48000, 32, true);
         // assert_eq!(1, 2, "Fake error");
     }
 }
